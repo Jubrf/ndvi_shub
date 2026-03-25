@@ -1,10 +1,9 @@
 streamlit
-geopandas
+shapely
+requests
 rasterio
 numpy
-requests
-rasterstats
 folium
 streamlit-folium
-shapely
 pyproj
+pyshp
