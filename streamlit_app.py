@@ -33,18 +33,17 @@ if uploaded:
     gdf = load_vector(uploaded)
     st.success(f"{len(gdf['features'])} parcelles chargées ✅")
 
-    # Géométries shapely
     geoms = [shape(f["geometry"]) for f in gdf["features"]]
 
-    # -----------------------------------------------------------
-    # ✅ BBOX GLOBALE + PADDING (0.005° ≈ 500 m)
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ BBOX GLOBALE + PADDING
+    # ---------------------------
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     maxx = max(g.bounds[2] for g in geoms)
     maxy = max(g.bounds[3] for g in geoms)
 
-    padding = 0.005
+    padding = 0.005  # ≈ 500 m
     minx -= padding
     miny -= padding
     maxx += padding
@@ -63,9 +62,9 @@ if uploaded:
         ]]
     })
 
-    # -----------------------------------------------------------
-    # ✅ Fenêtre temporelle NDVI
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ FENÊTRE TEMPORELLE NDVI
+    # ---------------------------
     time_range = ("2026-03-01T00:00:00Z", "2026-03-31T23:59:59Z")
 
     st.info("Demande NDVI à Sentinel Hub CDSE…")
@@ -75,23 +74,22 @@ if uploaded:
         st.error("❌ Impossible d'obtenir le NDVI depuis Sentinel Hub.")
         st.stop()
 
-    # Sauvegarde NDVI
     ndvi_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
     ndvi_tmp.write(ndvi_bytes)
     ndvi_tmp.close()
 
     st.success("✅ NDVI reçu depuis Sentinel Hub")
 
-    # -----------------------------------------------------------
-    # ✅ NDVI par parcelle
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ ZONAL STATISTICS
+    # ---------------------------
     st.info("Calcul NDVI moyen par parcelle…")
     gdf = extract_ndvi_stats(gdf, ndvi_tmp.name)
-    st.success("✅ NDVI calculé pour toutes les parcelles disponibles")
+    st.success("✅ NDVI calculé pour toutes les parcelles")
 
-    # -----------------------------------------------------------
-    # ✅ Carte NDVI
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ CARTE NDVI
+    # ---------------------------
     st.subheader("🗺️ Carte NDVI")
 
     def colorize(v):
@@ -121,9 +119,9 @@ if uploaded:
 
     st_folium(m, height=600)
 
-    # -----------------------------------------------------------
-    # ✅ Tableau NDVI
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ TABLEAU NDVI
+    # ---------------------------
     st.subheader("📊 NDVI par parcelle")
 
     rows = [
@@ -133,9 +131,9 @@ if uploaded:
 
     st.dataframe(rows)
 
-    # -----------------------------------------------------------
-    # ✅ Export CSV
-    # -----------------------------------------------------------
+    # ---------------------------
+    # ✅ EXPORT CSV
+    # ---------------------------
     df = pd.DataFrame(rows)
 
     st.download_button(
