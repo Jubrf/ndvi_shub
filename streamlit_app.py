@@ -14,7 +14,7 @@ from utils.ndvi_processing import extract_single_polygon_ndvi
 # CONFIG
 # -----------------------------------------------------------
 st.set_page_config(page_title="NDVI Sentinel Hub", layout="wide")
-st.title("🌱 NDVI Sentinel Hub — Parcelle par parcelle + Fallback multi-dates + Cloud Mask")
+st.title("🌱 NDVI Sentinel Hub — Parcelle par parcelle + Fallback J-0 → J-30")
 
 uploaded = st.file_uploader(
     "Uploader un fichier : ZIP SHP ou GEOJSON",
@@ -22,47 +22,45 @@ uploaded = st.file_uploader(
 )
 
 # -----------------------------------------------------------
-# ✅ FALLBACK NDVI PARCELLE PAR PARCELLE (STYLE KERMAP)
+# ✅ FALLBACK NDVI JOUR PAR JOUR (LE PLUS FIABLE)
 # -----------------------------------------------------------
-def fallback_ndvi_for_parcel(geom, max_days=30, step=3):
+def fallback_ndvi_for_parcel(geom, max_days=30):
     """
-    Tente NDVI sur J0, J-3, J-6... jusqu’à max_days.
-    Retourne (ndvi_mean, sensing_date)
+    Tente chaque jour individuellement :
+    J0, J-1, J-2, …, J-30
+    -> Trouve TOUJOURS la tuile du 19 mars s'il y en a une.
     """
+
     today = datetime.datetime.utcnow().date()
 
-    for delta in range(0, max_days, step):
+    for delta in range(0, max_days + 1):
 
-        from_date = (today - datetime.timedelta(days=delta + step)).strftime("%Y-%m-%dT00:00:00Z")
-        to_date   = (today - datetime.timedelta(days=delta)).strftime("%Y-%m-%dT23:59:59Z")
+        day = today - datetime.timedelta(days=delta)
+        d_from = f"{day}T00:00:00Z"
+        d_to   = f"{day}T23:59:59Z"
+        time_range = (d_from, d_to)
 
-        time_range = (from_date, to_date)
+        st.write(f"🔎 Essai du {day}…")
 
-        st.write(f"🔍 Test période : {from_date} → {to_date}")
-
-        # NDVI via Process API
         ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(geom, time_range)
 
         if ndvi_bytes is None or sensing_date is None:
-            st.warning("⏳ NDVI indisponible sur cette période. On remonte…")
             continue
 
-        # Sauvegarde temporaire NDVI
+        # Sauvegarde NDVI temporaire
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
         tmp.write(ndvi_bytes)
         tmp.close()
 
-        # Extraction NDVI parcelle
+        # Extraction NDVI SUR LA PARCELLE
         values = extract_single_polygon_ndvi(tmp.name, geom)
 
         if len(values) > 0:
             ndvi_mean = float(values.mean())
-            st.success(f"✅ NDVI trouvé : {ndvi_mean} (date : {sensing_date})")
+            st.success(f"✅ NDVI trouvé pour le {sensing_date}")
             return ndvi_mean, sensing_date
 
-        st.warning("🟨 NDVI vide (nuages/ombres) → fallback…")
-
-    st.error("❌ Aucun NDVI exploitable jusqu'à J-30")
+    st.error("❌ Aucun NDVI exploitable jusqu'à J-30.")
     return None, None
 
 
@@ -74,15 +72,15 @@ if uploaded:
     gdf = load_vector(uploaded)
     geoms = [shape(f["geometry"]) for f in gdf["features"]]
 
-    rows = []
+    st.info("Analyse NDVI parcelle par parcelle (Fallback J-0 → J-30)…")
 
-    st.info("Calcul NDVI parcelle par parcelle (fallback multi‑dates)…")
+    rows = []
 
     for i, geom in enumerate(geoms):
 
         st.write(f"\n## Parcelle {i+1}")
 
-        # ✅ BBOX locale étendue
+        # ✅ BBOX locale étendue (évite les bords vides)
         minx, miny, maxx, maxy = geom.bounds
         pad = 0.003
         minx -= pad; miny -= pad
@@ -99,23 +97,24 @@ if uploaded:
             ]]
         })
 
+        # ✅ Fallback jour par jour
         ndvi_mean, date_used = fallback_ndvi_for_parcel(bbox_local)
 
         rows.append({
-            "Parcelle": i+1,
+            "Parcelle": i + 1,
             "NDVI": ndvi_mean,
             "Date": date_used
         })
 
-    # ✅ Résultats
+    # ✅ Résultats en tableau
     df = pd.DataFrame(rows)
     st.subheader("📊 NDVI par parcelle")
     st.dataframe(df)
 
     # -----------------------------------------------------------
-    # ✅ Carte NDVI type Kermap
+    # ✅ Carte NDVI palette Kermap
     # -----------------------------------------------------------
-    st.subheader("🗺️ Carte NDVI — palette Kermap")
+    st.subheader("🗺️ Carte NDVI — Palette Kermap")
 
     def colorize(v):
         if v is None:
@@ -125,7 +124,7 @@ if uploaded:
         if vv < 0.66: return "#fee08b"
         return "#1a9850"
 
-    # Centre carte
+    # BBOX globale pour centrage
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     maxx = max(g.bounds[2] for g in geoms)
@@ -133,7 +132,6 @@ if uploaded:
 
     m = folium.Map(location=[(miny+maxy)/2, (minx+maxx)/2], zoom_start=14)
 
-    # Ajout parcelles
     for i, feat in enumerate(gdf["features"]):
         ndvi = df.iloc[i]["NDVI"]
         folium.GeoJson(
@@ -144,7 +142,7 @@ if uploaded:
                 "weight": 1,
                 "fillOpacity": 0.7
             },
-            tooltip=f"Parcelle {i+1} — NDVI : {ndvi}"
+            tooltip=f"Parcelle {i+1} — NDVI={ndvi}"
         ).add_to(m)
 
     st_folium(m, height=600)
