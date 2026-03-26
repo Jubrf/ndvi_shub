@@ -1,10 +1,10 @@
 import requests
 import streamlit as st
 
-# Token endpoint CDSE
+# ✅ OAuth2 CDSE
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 
-# Process API CDSE
+# ✅ Process API CDSE
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
 
@@ -21,8 +21,8 @@ def get_sh_token():
     r = requests.post(TOKEN_URL, data=payload)
 
     if r.status_code != 200:
-        st.error("❌ Erreur lors de l'obtention du token OAuth2 CDSE")
-        st.write("Code HTTP :", r.status_code)
+        st.error("❌ Erreur TOKEN OAuth2 CDSE")
+        st.write("Code :", r.status_code)
         st.write("Réponse :", r.text)
         return None
 
@@ -43,7 +43,6 @@ def sentinelhub_ndvi_request(geom, time_range):
         output: { id: "default", bands: 1, sampleType: "FLOAT32" }
       };
     }
-
     function evaluatePixel(s) {
       return [(s.B08 - s.B04) / (s.B08 + s.B04)];
     }
@@ -51,9 +50,7 @@ def sentinelhub_ndvi_request(geom, time_range):
 
     body = {
         "input": {
-            "bounds": {
-                "bbox": [minx, miny, maxx, maxy]
-            },
+            "bounds": { "bbox": [minx, miny, maxx, maxy] },
             "data": [{
                 "type": "S2L2A",
                 "dataFilter": {
@@ -65,24 +62,4 @@ def sentinelhub_ndvi_request(geom, time_range):
             }]
         },
         "output": {
-            "width": 512,
-            "height": 512,
-            "responses": [{
-                "identifier": "default",
-                "format": {"type": "image/tiff"}
-            }]
-        },
-        "evalscript": evalscript
-    }
-
-    headers = {"Authorization": f"Bearer {token}"}
-
-    r = requests.post(PROCESS_URL, json=body, headers=headers)
-
-    if r.status_code != 200:
-        st.error("❌ Erreur Process API CDSE")
-        st.write("Code HTTP :", r.status_code)
-        st.write("Réponse :", r.text)
-        return None
-
-    return r.content
+            "width": 1024,     # ✅ résolution augment
