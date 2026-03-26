@@ -2,51 +2,58 @@ import tempfile
 import json
 import zipfile
 import os
-import shapefile  # pyshp
+import shapefile
 from shapely.geometry import shape
-import pyproj
 from shapely.ops import transform
+import pyproj
 
 def load_vector(uploaded):
-    """
-    Charge un ZIP SHP ou un GeoJSON et renvoie un dict {features:[...]}
-    """
 
     suffix = ".zip" if uploaded.name.endswith(".zip") else ".geojson"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.write(uploaded.read())
     tmp.close()
 
+    # GEOJSON
     if suffix == ".geojson":
-        with open(tmp.name) as f:
-            gj = json.load(f)
-        features = [{"geometry": shape(feat["geometry"]).__geo_interface__, "properties": {}} for feat in gj["features"]]
+        with open(tmp.name, "r") as f:
+            data = json.load(f)
+        features = []
+        for feat in data["features"]:
+            geom = shape(feat["geometry"])
+            features.append({"geometry": geom.__geo_interface__, "properties": {}})
         return {"features": features}
 
+    # ZIP SHP
     with zipfile.ZipFile(tmp.name, "r") as z:
         extract_dir = tempfile.mkdtemp()
         z.extractall(extract_dir)
 
-    shp_file = [f for f in os.listdir(extract_dir) if f.endswith(".shp")][0]
-    sf = shapefile.Reader(os.path.join(extract_dir, shp_file))
+    shp = None
+    for f in os.listdir(extract_dir):
+        if f.endswith(".shp"):
+            shp = os.path.join(extract_dir, f)
+            break
+    if shp is None:
+        raise ValueError("Pas de SHP dans l'archive.")
+
+    sf = shapefile.Reader(shp)
     shapes = sf.shapes()
 
     geoms = [shape(s.__geo_interface__) for s in shapes]
 
-    # Reprojection si PRJ
-    prj = shp_file.replace(".shp", ".prj")
-    crs = None
-    if os.path.exists(os.path.join(extract_dir, prj)):
-        with open(os.path.join(extract_dir, prj)) as f:
+    # reprojection si PRJ
+    prj = shp.replace(".shp", ".prj")
+    if os.path.exists(prj):
+        with open(prj) as f:
             wkt = f.read()
         try:
-            crs = pyproj.CRS.from_wkt(wkt)
+            src = pyproj.CRS.from_wkt(wkt)
+            if src.to_epsg() != 4326:
+                dst = pyproj.CRS.from_epsg(4326)
+                proj = pyproj.Transformer.from_crs(src, dst, always_xy=True).transform
+                geoms = [transform(proj, g) for g in geoms]
         except:
             pass
 
-    if crs and crs.to_epsg() != 4326:
-        to_wgs = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True).transform
-        geoms = [transform(to_wgs, g) for g in geoms]
-
-    features = [{"geometry": g.__geo_interface__, "properties": {}} for g in geoms]
-    return {"features": features}
+    return {"features": [{"geometry": g.__geo_interface__, "properties": {}} for g in geoms]}
