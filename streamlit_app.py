@@ -9,70 +9,106 @@ from utils.vector_io import load_vector
 from utils.sentinelhub_client import sentinelhub_ndvi_with_date
 from utils.ndvi_processing import extract_ndvi_stats
 
+# -----------------------------------------------------------
+# CONFIG
+# -----------------------------------------------------------
 st.set_page_config(page_title="NDVI Sentinel Hub", layout="wide")
-st.title("🌱 NDVI Sentinel Hub – Cloud Mask + Date + Palette Pro")
+st.title("🌱 NDVI Sentinel Hub – Masque Nuages + Date tuile + Palette Pro")
 
-uploaded = st.file_uploader("Upload ZIP SHP or GeoJSON", type=["zip","geojson"])
+uploaded = st.file_uploader(
+    "Uploader un fichier : ZIP SHP ou GEOJSON",
+    type=["zip", "geojson"]
+)
 
+# -----------------------------------------------------------
+# MAIN
+# -----------------------------------------------------------
 if uploaded:
 
+    # ✅ Charger les parcelles
     gdf = load_vector(uploaded)
     geoms = [shape(f["geometry"]) for f in gdf["features"]]
 
-    # ✅ BBOX globale
+    # ✅ Calcul BBOX globale
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     maxx = max(g.bounds[2] for g in geoms)
     maxy = max(g.bounds[3] for g in geoms)
 
+    # ✅ padding de ~1 km pour éviter les crop Sentinel Hub
     padding = 0.01
-    minx -= padding; miny -= padding
-    maxx += padding; maxy += padding
+    minx -= padding
+    miny -= padding
+    maxx += padding
+    maxy += padding
 
-    st.write("✅ BBOX :", (minx,miny,maxx,maxy))
+    st.write("✅ BBOX utilisée :", (minx, miny, maxx, maxy))
 
+    # ✅ Construction du polygone global
     bbox_geom = shape({
-        "type":"Polygon",
-        "coordinates":[[
-            [minx,miny],[maxx,miny],
-            [maxx,maxy],[minx,maxy],
-            [minx,miny]
+        "type": "Polygon",
+        "coordinates": [[
+            [minx, miny],
+            [maxx, miny],
+            [maxx, maxy],
+            [minx, maxy],
+            [minx, miny]
         ]]
     })
 
     # ✅ période NDVI
+    # (à rendre dynamique plus tard si tu veux)
     time_range = ("2026-03-01T00:00:00Z", "2026-03-31T23:59:59Z")
 
-    # ✅ NDVI + date directe via le Process API
-    st.info("Récupération NDVI + date via Process API (sans catalogue)…")
-ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(bbox_geom, time_range)
+    # -----------------------------------------------------------
+    # ✅ NDVI + DATE via Process API (sans catalogue → jamais 503)
+    # -----------------------------------------------------------
+    st.info("Récupération NDVI + date via Process API CDSE (sans catalogue)…")
 
-if sensing_date:
-    st.success(f"✅ Tuile utilisée : {sensing_date}")
-else:
-    st.warning("⚠️ Date non fournie (rare).")
+    ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(bbox_geom, time_range)
 
-    st.success(f"✅ Tuile utilisée : {sensing_date}")
+    if ndvi_bytes is None:
+        st.error("❌ Impossible d'obtenir l'image NDVI depuis CDSE.")
+        st.stop()
 
-    # Sauvegarde NDVI
+    if sensing_date:
+        st.success(f"✅ Tuile réellement utilisée : {sensing_date}")
+    else:
+        st.warning("⚠️ Date non trouvée dans les métadonnées (rare).")
+
+    # Sauvegarde en TIFF temporaire
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
     tmp.write(ndvi_bytes)
     tmp.close()
 
-    # ✅ Zonal stats
+    # -----------------------------------------------------------
+    # ✅ Zonal stats NDVI
+    # -----------------------------------------------------------
+    st.info("Calcul NDVI moyen par parcelle…")
+
     gdf = extract_ndvi_stats(gdf, tmp.name)
+
     st.success("✅ NDVI calculé pour chaque parcelle")
 
-    # ✅ Palette Kermap
+    # -----------------------------------------------------------
+    # ✅ Carte NDVI – palette type Kermap
+    # -----------------------------------------------------------
+    st.subheader("🗺️ Carte NDVI (palette Kermap)")
+
     def colorize(v):
         if v is None:
             return "#cccccc"
-        vv = (v+1)/2
-        if vv < 0.33: return "#d73027"
-        if vv < 0.66: return "#fee08b"
-        return "#1a9850"
+        vv = (v + 1) / 2   # normalisation
+        if vv < 0.33:
+            return "#d73027"  # rouge
+        if vv < 0.66:
+            return "#fee08b"  # jaune
+        return "#1a9850"      # vert
 
-    m = folium.Map(location=[(miny+maxy)/2,(minx+maxx)/2], zoom_start=14)
+    center_lat = (miny + maxy) / 2
+    center_lon = (minx + maxx) / 2
+
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
 
     for feat in gdf["features"]:
         ndvi = feat["properties"]["NDVI"]
@@ -80,23 +116,30 @@ else:
             feat["geometry"],
             style_function=lambda x, ndvi=ndvi: {
                 "fillColor": colorize(ndvi),
-                "color":"black",
-                "weight":1,
-                "fillOpacity":0.7
+                "color": "black",
+                "weight": 1,
+                "fillOpacity": 0.7
             },
             tooltip=f"NDVI = {ndvi}"
         ).add_to(m)
 
     st_folium(m, height=600)
 
-    # ✅ Tableau
+    # -----------------------------------------------------------
+    # ✅ Tableau NDVI + export CSV
+    # -----------------------------------------------------------
+    st.subheader(f"📊 NDVI par parcelle — Tuile du {sensing_date[:10] if sensing_date else 'N/A'}")
+
     rows = [
-        {"Parcelle": i+1, "NDVI": feat["properties"]["NDVI"]}
+        {"Parcelle": i + 1, "NDVI": feat["properties"]["NDVI"]}
         for i, feat in enumerate(gdf["features"])
     ]
-
     df = pd.DataFrame(rows)
-    st.subheader(f"📊 NDVI par parcelle – tuile du {sensing_date}")
+
     st.dataframe(df)
 
-    st.download_button("Télécharger CSV", df.to_csv(index=False).encode(), "ndvi.csv")
+    st.download_button(
+        "Télécharger NDVI (CSV)",
+        df.to_csv(index=False).encode(),
+        "ndvi.csv"
+    )
