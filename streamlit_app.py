@@ -73,4 +73,4 @@ if uploaded:
     # Tableau
     st.subheader("📊 NDVI par parcelle")
     rows = [{"Parcelle": i+1, "NDVI": f["properties"]["NDVI"]} for i, f in enumerate(gdf["features"])]
-    st.dataframe(rows)er
+    st.dataframe(rows)
