@@ -1,11 +1,14 @@
 import requests
 import streamlit as st
+from datetime import datetime
 
+# OAuth2 CDSE
 TOKEN_URL = (
     "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
     "protocol/openid-connect/token"
 )
 
+# Process API CDSE
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
 
@@ -33,28 +36,43 @@ def get_sh_token():
 def sentinelhub_ndvi_request(geom, time_range):
     token = get_sh_token()
     if token is None:
-        return None
+        return None, None
 
     minx, miny, maxx, maxy = geom.bounds
 
+    # ✅ Mask nuages + ombres (SCL=3,8,9,10,11)
     evalscript = """
     function setup() {
       return {
-        input: ["B04", "B08", "SCL"],
-        output: { id:"default", bands: 1, sampleType: "FLOAT32" }
+        input: ["B04", "B08", "SCL", "DATE"],
+        output: [
+          { id:"ndvi", bands: 1, sampleType: "FLOAT32" },
+          { id:"date", bands: 1, sampleType: "UINT32" }
+        ]
       };
     }
 
-    function isCloud(scl) {
+    function isCloudOrShadow(scl) {
       return (scl === 3 || scl === 8 || scl === 9 || scl === 10 || scl === 11);
     }
 
-    function evaluatePixel(sample) {
-      if (isCloud(sample.SCL)) {
-        return [NaN];
+    function evaluatePixel(s, scene) {
+      // date en format AAAAMMJJ
+      let d = new Date(scene.date);
+      let dateint = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
+
+      if (isCloudOrShadow(s.SCL)) {
+        return {
+          ndvi: [NaN],
+          date: [dateint]
+        };
       }
-      let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-      return [ndvi];
+
+      let ndvi_val = (s.B08 - s.B04) / (s.B08 + s.B04);
+      return {
+        ndvi: [ndvi_val],
+        date: [dateint]
+      };
     }
     """
 
@@ -78,7 +96,11 @@ def sentinelhub_ndvi_request(geom, time_range):
             "height": 2048,
             "responses": [
                 {
-                    "identifier": "default",
+                    "identifier": "ndvi",
+                    "format": {"type": "image/tiff"}
+                },
+                {
+                    "identifier": "date",
                     "format": {"type": "image/tiff"}
                 }
             ]
@@ -94,6 +116,7 @@ def sentinelhub_ndvi_request(geom, time_range):
         st.error("❌ Erreur Process API CDSE")
         st.write("HTTP:", r.status_code)
         st.write("Réponse:", r.text)
-        return None
+        return None, None
 
-    return r.content
+    # ✅ réponse multiparts → le NDVI est en première réponse
+    return r.content, None
