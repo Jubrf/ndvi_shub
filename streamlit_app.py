@@ -107,19 +107,15 @@ if uploaded:
         ndvi = feat["properties"]["NDVI"]
 
         folium.GeoJson(
-            feat["geometry"],
-            style_function=lambda x, ndvi=ndvi: {
-                "fillColor": colorize(ndvi),
-                "color": "black",
-                "weight": 1,
-                "fillOpacity": 0.7
-            },
-            tooltip=folium.GeoJsonTooltip(
-                fields=["NDVI"],
-                aliases=["NDVI moyen :"],
-                localize=True
-            )
-        ).add_to(m)
+    feat["geometry"],
+    style_function=lambda x, ndvi=ndvi: {
+        "fillColor": colorize(ndvi),
+        "color": "black",
+        "weight": 1,
+        "fillOpacity": 0.7
+    },
+    tooltip=f"NDVI : {ndvi}"
+).add_to(m)
 
     st_folium(m, height=600)
 
