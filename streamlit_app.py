@@ -37,14 +37,15 @@ if uploaded:
     time_range = ("2026-03-01T00:00:00Z", "2026-03-31T23:59:59Z")
 
     st.info("Recherche du dernier produit Sentinel‑2 L2A…")
-    feature = find_s2_product(bbox, time_range)
+feature = find_s2_product(bbox, time_range)
 
-    if feature is None:
-        st.error("Aucune tuile trouvée.")
-        st.stop()
+if feature is None:
+    st.error("❌ Impossible d'obtenir une tuile (serveur/stac down)")
+    st.stop()
 
-    sensing_date = feature["properties"]["datetime"]
-    st.success(f"✅ Tuile Sentinel‑2 trouvée ({sensing_date})")
+# ✅ récupération date (toujours présente car feature STAC)
+sensing_date = feature["properties"]["datetime"]
+st.success(f"✅ Date dernière tuile S2 : {sensing_date}")
 
     # ✅ Polygone global
     global_geom = shape({
