@@ -15,7 +15,7 @@ from utils.ndvi_processing import extract_ndvi_stats
 st.set_page_config(page_title="NDVI Sentinel Hub", layout="wide")
 st.title("🌱 Analyse NDVI – Sentinel Hub")
 
-# DEBUG secrets (à supprimer ensuite)
+# DEBUG (à retirer ensuite)
 st.write("DEBUG CLIENT_ID =", st.secrets.get("SENTINELHUB_CLIENT_ID"))
 st.write("DEBUG SECRET LENGTH =", len(st.secrets.get("SENTINELHUB_CLIENT_SECRET", "")))
 
@@ -25,7 +25,7 @@ uploaded = st.file_uploader(
 )
 
 # -----------------------------------------------------------
-# MAIN LOGIC
+# MAIN
 # -----------------------------------------------------------
 if uploaded:
 
@@ -33,20 +33,25 @@ if uploaded:
     gdf = load_vector(uploaded)
     st.success(f"{len(gdf['features'])} parcelles chargées ✅")
 
-    # Extraction des géométries Shapely
+    # Géométries shapely
     geoms = [shape(f["geometry"]) for f in gdf["features"]]
 
-    # ---------------------------------------------------
-    # ✅ BBOX GLOBALE pour couvrir TOUTES les parcelles
-    # ---------------------------------------------------
+    # -----------------------------------------------------------
+    # ✅ BBOX GLOBALE + PADDING (0.005° ≈ 500 m)
+    # -----------------------------------------------------------
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     maxx = max(g.bounds[2] for g in geoms)
     maxy = max(g.bounds[3] for g in geoms)
 
-    st.write("✅ BBOX globale :", (minx, miny, maxx, maxy))
+    padding = 0.005
+    minx -= padding
+    miny -= padding
+    maxx += padding
+    maxy += padding
 
-    # Construction du polygone global
+    st.write("✅ BBOX élargie :", (minx, miny, maxx, maxy))
+
     global_geom = shape({
         "type": "Polygon",
         "coordinates": [[
@@ -60,18 +65,17 @@ if uploaded:
 
     # -----------------------------------------------------------
     # ✅ Fenêtre temporelle NDVI
-    # (à mettre dynamique après si tu veux un date-picker)
     # -----------------------------------------------------------
     time_range = ("2026-03-01T00:00:00Z", "2026-03-31T23:59:59Z")
 
-    st.info("Demande NDVI à Sentinel Hub…")
+    st.info("Demande NDVI à Sentinel Hub CDSE…")
     ndvi_bytes = sentinelhub_ndvi_request(global_geom, time_range)
 
     if ndvi_bytes is None:
         st.error("❌ Impossible d'obtenir le NDVI depuis Sentinel Hub.")
         st.stop()
 
-    # Sauvegarde du NDVI localement
+    # Sauvegarde NDVI
     ndvi_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
     ndvi_tmp.write(ndvi_bytes)
     ndvi_tmp.close()
@@ -79,14 +83,14 @@ if uploaded:
     st.success("✅ NDVI reçu depuis Sentinel Hub")
 
     # -----------------------------------------------------------
-    # ✅ NDVI moyen par parcelle (zonal statistics)
+    # ✅ NDVI par parcelle
     # -----------------------------------------------------------
     st.info("Calcul NDVI moyen par parcelle…")
     gdf = extract_ndvi_stats(gdf, ndvi_tmp.name)
-    st.success("✅ NDVI calculé pour toutes les parcelles")
+    st.success("✅ NDVI calculé pour toutes les parcelles disponibles")
 
     # -----------------------------------------------------------
-    # ✅ CARTE NDVI
+    # ✅ Carte NDVI
     # -----------------------------------------------------------
     st.subheader("🗺️ Carte NDVI")
 
@@ -97,30 +101,28 @@ if uploaded:
         g = int(v * 255)
         return f"#{r:02x}{g:02x}00"
 
-    # Centre de la carte
     center_lat = (miny + maxy) / 2
     center_lon = (minx + maxx) / 2
-
     m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
 
     for feat in gdf["features"]:
         ndvi = feat["properties"]["NDVI"]
 
         folium.GeoJson(
-    feat["geometry"],
-    style_function=lambda x, ndvi=ndvi: {
-        "fillColor": colorize(ndvi),
-        "color": "black",
-        "weight": 1,
-        "fillOpacity": 0.7
-    },
-    tooltip=f"NDVI : {ndvi}"
-).add_to(m)
+            feat["geometry"],
+            style_function=lambda x, ndvi=ndvi: {
+                "fillColor": colorize(ndvi),
+                "color": "black",
+                "weight": 1,
+                "fillOpacity": 0.7,
+            },
+            tooltip=f"NDVI : {ndvi}"
+        ).add_to(m)
 
     st_folium(m, height=600)
 
     # -----------------------------------------------------------
-    # ✅ TABLEAU NDVI
+    # ✅ Tableau NDVI
     # -----------------------------------------------------------
     st.subheader("📊 NDVI par parcelle")
 
@@ -132,7 +134,7 @@ if uploaded:
     st.dataframe(rows)
 
     # -----------------------------------------------------------
-    # ✅ EXPORT CSV
+    # ✅ Export CSV
     # -----------------------------------------------------------
     df = pd.DataFrame(rows)
 
