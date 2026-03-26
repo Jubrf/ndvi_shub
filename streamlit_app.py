@@ -45,11 +45,12 @@ if uploaded:
 
     # ✅ NDVI + date directe via le Process API
     st.info("Récupération NDVI + date via Process API (sans catalogue)…")
-    ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(bbox_geom, time_range)
+ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(bbox_geom, time_range)
 
-    if ndvi_bytes is None:
-        st.error("Impossible d'obtenir l'image NDVI.")
-        st.stop()
+if sensing_date:
+    st.success(f"✅ Tuile utilisée : {sensing_date}")
+else:
+    st.warning("⚠️ Date non fournie (rare).")
 
     st.success(f"✅ Tuile utilisée : {sensing_date}")
 
