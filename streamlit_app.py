@@ -14,7 +14,7 @@ from utils.ndvi_processing import extract_single_polygon_ndvi
 # CONFIG
 # -----------------------------------------------------------
 st.set_page_config(page_title="NDVI Sentinel Hub", layout="wide")
-st.title("🌱 NDVI Sentinel Hub — Parcelle par parcelle + Fallback multi-dates + Masque nuages")
+st.title("🌱 NDVI Sentinel Hub — Parcelle par parcelle + Fallback multi-dates + Cloud Mask")
 
 uploaded = st.file_uploader(
     "Uploader un fichier : ZIP SHP ou GEOJSON",
@@ -22,51 +22,47 @@ uploaded = st.file_uploader(
 )
 
 # -----------------------------------------------------------
-# ✅ FALLBACK NDVI PAR PARCELLE (STYLE KERMAP)
+# ✅ FALLBACK NDVI PARCELLE PAR PARCELLE (STYLE KERMAP)
 # -----------------------------------------------------------
 def fallback_ndvi_for_parcel(geom, max_days=30, step=3):
     """
-    Calcule le NDVI pour UNE parcelle avec fallback :
-    J0, J-3, J-6, …, jusqu'à max_days.
-    Retourne : (ndvi_mean, sensing_date)
+    Tente NDVI sur J0, J-3, J-6... jusqu’à max_days.
+    Retourne (ndvi_mean, sensing_date)
     """
-
     today = datetime.datetime.utcnow().date()
 
     for delta in range(0, max_days, step):
 
-        day_from = today - datetime.timedelta(days=delta + step)
-        day_to   = today - datetime.timedelta(days=delta)
+        from_date = (today - datetime.timedelta(days=delta + step)).strftime("%Y-%m-%dT00:00:00Z")
+        to_date   = (today - datetime.timedelta(days=delta)).strftime("%Y-%m-%dT23:59:59Z")
 
-        time_range = (
-            f"{day_from.strftime('%Y-%m-%d')}T00:00:00Z",
-            f"{day_to.strftime('%Y-%m-%d')}T23:59:59Z"
-        )
+        time_range = (from_date, to_date)
 
-        st.write(f"🔎 Parcelle : période testée {time_range[0]} → {time_range[1]}")
+        st.write(f"🔍 Test période : {from_date} → {to_date}")
 
+        # NDVI via Process API
         ndvi_bytes, sensing_date = sentinelhub_ndvi_with_date(geom, time_range)
 
-        if ndvi_bytes is None:
-            st.warning("⏳ Aucune donnée NDVI exploitable dans cette fenêtre.")
+        if ndvi_bytes is None or sensing_date is None:
+            st.warning("⏳ NDVI indisponible sur cette période. On remonte…")
             continue
 
-        # Sauvegarde du raster NDVI
+        # Sauvegarde temporaire NDVI
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
         tmp.write(ndvi_bytes)
         tmp.close()
 
-        # NDVI moyens sur la parcelle
+        # Extraction NDVI parcelle
         values = extract_single_polygon_ndvi(tmp.name, geom)
 
         if len(values) > 0:
             ndvi_mean = float(values.mean())
-            st.success(f"✅ NDVI trouvé pour {sensing_date}")
+            st.success(f"✅ NDVI trouvé : {ndvi_mean} (date : {sensing_date})")
             return ndvi_mean, sensing_date
 
-        st.warning("🟨 NDVI vide (nuages/ombres). On remonte dans le temps…")
+        st.warning("🟨 NDVI vide (nuages/ombres) → fallback…")
 
-    st.error("❌ Pas de NDVI utilisable jusqu'à J-30.")
+    st.error("❌ Aucun NDVI exploitable jusqu'à J-30")
     return None, None
 
 
@@ -78,22 +74,21 @@ if uploaded:
     gdf = load_vector(uploaded)
     geoms = [shape(f["geometry"]) for f in gdf["features"]]
 
-    st.info("Analyse NDVI parcelle par parcelle (fallback multi-dates)…")
-
     rows = []
-    all_dates = []
 
-    for idx, geom in enumerate(geoms):
+    st.info("Calcul NDVI parcelle par parcelle (fallback multi‑dates)…")
 
-        st.write(f"### Parcelle {idx+1}")
+    for i, geom in enumerate(geoms):
+
+        st.write(f"\n## Parcelle {i+1}")
 
         # ✅ BBOX locale étendue
         minx, miny, maxx, maxy = geom.bounds
-        padding = 0.003    # ~300 m autour
-        minx -= padding; miny -= padding
-        maxx += padding; maxy += padding
+        pad = 0.003
+        minx -= pad; miny -= pad
+        maxx += pad; maxy += pad
 
-        local_bbox = shape({
+        bbox_local = shape({
             "type": "Polygon",
             "coordinates": [[
                 [minx, miny],
@@ -104,26 +99,21 @@ if uploaded:
             ]]
         })
 
-        # ✅ NDVI + date avec fallback
-        ndvi_mean, sensing_date = fallback_ndvi_for_parcel(local_bbox)
+        ndvi_mean, date_used = fallback_ndvi_for_parcel(bbox_local)
 
         rows.append({
-            "Parcelle": idx + 1,
+            "Parcelle": i+1,
             "NDVI": ndvi_mean,
-            "Date": sensing_date
+            "Date": date_used
         })
-        all_dates.append(sensing_date)
 
-    # -----------------------------------------------------------
-    # ✅ DataFrame final
-    # -----------------------------------------------------------
+    # ✅ Résultats
     df = pd.DataFrame(rows)
-
-    st.subheader("📊 Résultats NDVI par parcelle")
+    st.subheader("📊 NDVI par parcelle")
     st.dataframe(df)
 
     # -----------------------------------------------------------
-    # ✅ Carte NDVI (palette Kermap)
+    # ✅ Carte NDVI type Kermap
     # -----------------------------------------------------------
     st.subheader("🗺️ Carte NDVI — palette Kermap")
 
@@ -135,18 +125,15 @@ if uploaded:
         if vv < 0.66: return "#fee08b"
         return "#1a9850"
 
-    # BBOX globale pour le centrage
-    global_minx = min(shape(f["geometry"]).bounds[0] for f in gdf["features"])
-    global_miny = min(shape(f["geometry"]).bounds[1] for f in gdf["features"])
-    global_maxx = max(shape(f["geometry"]).bounds[2] for f in gdf["features"])
-    global_maxy = max(shape(f["geometry"]).bounds[3] for f in gdf["features"])
+    # Centre carte
+    minx = min(g.bounds[0] for g in geoms)
+    miny = min(g.bounds[1] for g in geoms)
+    maxx = max(g.bounds[2] for g in geoms)
+    maxy = max(g.bounds[3] for g in geoms)
 
-    center_lat = (global_miny + global_maxy) / 2
-    center_lon = (global_minx + global_maxx) / 2
+    m = folium.Map(location=[(miny+maxy)/2, (minx+maxx)/2], zoom_start=14)
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
-
-    # Ajouter les parcelles à la carte
+    # Ajout parcelles
     for i, feat in enumerate(gdf["features"]):
         ndvi = df.iloc[i]["NDVI"]
         folium.GeoJson(
@@ -155,16 +142,14 @@ if uploaded:
                 "fillColor": colorize(ndvi),
                 "color": "black",
                 "weight": 1,
-                "fillOpacity": 0.7,
+                "fillOpacity": 0.7
             },
-            tooltip=f"Parcelle {i+1} — NDVI = {ndvi}"
+            tooltip=f"Parcelle {i+1} — NDVI : {ndvi}"
         ).add_to(m)
 
     st_folium(m, height=600)
 
-    # -----------------------------------------------------------
-    # ✅ Export CSV final
-    # -----------------------------------------------------------
+    # ✅ Export CSV
     st.download_button(
         "📥 Télécharger NDVI (CSV)",
         df.to_csv(index=False).encode(),
