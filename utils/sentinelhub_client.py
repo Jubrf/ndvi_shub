@@ -3,8 +3,8 @@ import streamlit as st
 from shapely.geometry import mapping
 
 # Sentinel Hub endpoints
-TOKEN_URL = "https://services.sentinel-hub.com/oauth/token"
-PROCESS_URL = "https://services.sentinel-hub.com/api/v1/process"
+TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
 
 def get_sh_token():
