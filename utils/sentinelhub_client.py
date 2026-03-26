@@ -1,16 +1,14 @@
 import requests
 import streamlit as st
-from shapely.geometry import mapping
 
-# Sentinel Hub endpoints
+# Token endpoint CDSE
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+
+# Process API CDSE
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
 
 
 def get_sh_token():
-    """
-    Récupère le token Sentinel Hub via OAuth2.
-    """
     client_id = st.secrets.get("SENTINELHUB_CLIENT_ID")
     client_secret = st.secrets.get("SENTINELHUB_CLIENT_SECRET")
 
@@ -21,43 +19,43 @@ def get_sh_token():
     }
 
     r = requests.post(TOKEN_URL, data=payload)
-    r.raise_for_status()
+
+    if r.status_code != 200:
+        st.error("❌ Erreur lors de l'obtention du token OAuth2 CDSE")
+        st.write("Code HTTP :", r.status_code)
+        st.write("Réponse :", r.text)
+        return None
 
     return r.json()["access_token"]
 
 
 def sentinelhub_ndvi_request(geom, time_range):
-    """
-    Appel Sentinel Hub Process API pour générer du NDVI.
-    geom : géométrie Shapely
-    """
-
     token = get_sh_token()
+    if token is None:
+        return None
+
+    minx, miny, maxx, maxy = geom.bounds
 
     evalscript = """
-    // NDVI = (NIR - RED) / (NIR + RED)
-    // B08 = NIR ; B04 = RED
     function setup() {
       return {
         input: ["B04", "B08"],
-        output: { bands: 1, sampleType: "FLOAT32" }
+        output: { id: "default", bands: 1, sampleType: "FLOAT32" }
       };
     }
 
-    function evaluatePixel(sample) {
-      return [ (sample.B08 - sample.B04) / (sample.B08 + sample.B04) ];
+    function evaluatePixel(s) {
+      return [(s.B08 - s.B04) / (s.B08 + s.B04)];
     }
     """
-
-    bbox = geometry_to_bbox(geom)
 
     body = {
         "input": {
             "bounds": {
-                "bbox": bbox
+                "bbox": [minx, miny, maxx, maxy]
             },
             "data": [{
-                "type": "sentinel-2-l2a",
+                "type": "S2L2A",
                 "dataFilter": {
                     "timeRange": {
                         "from": time_range[0],
@@ -68,22 +66,23 @@ def sentinelhub_ndvi_request(geom, time_range):
         },
         "output": {
             "width": 512,
-            "height": 512
+            "height": 512,
+            "responses": [{
+                "identifier": "default",
+                "format": {"type": "image/tiff"}
+            }]
         },
         "evalscript": evalscript
     }
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    r = requests.post(PROCESS_URL, headers=headers, json=body)
-    r.raise_for_status()
+    r = requests.post(PROCESS_URL, json=body, headers=headers)
 
-    return r.content  # GeoTIFF NDVI
+    if r.status_code != 200:
+        st.error("❌ Erreur Process API CDSE")
+        st.write("Code HTTP :", r.status_code)
+        st.write("Réponse :", r.text)
+        return None
 
-
-def geometry_to_bbox(geom):
-    """
-    Convertit une géométrie Shapely en bounding box [minx, miny, maxx, maxy]
-    """
-    minx, miny, maxx, maxy = geom.bounds
-    return [minx, miny, maxx, maxy]
+    return r.content
