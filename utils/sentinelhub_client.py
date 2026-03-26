@@ -1,9 +1,10 @@
 import requests
 import streamlit as st
+import json
 
 TOKEN_URL = (
-  "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
-  "protocol/openid-connect/token"
+    "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
+    "protocol/openid-connect/token"
 )
 
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
@@ -20,6 +21,7 @@ def get_sh_token():
     }
 
     r = requests.post(TOKEN_URL, data=payload)
+
     if r.status_code != 200:
         st.error("❌ Erreur OAuth2 CDSE")
         st.write(r.text)
@@ -47,7 +49,7 @@ def sentinelhub_ndvi_with_date(geom, time_range):
       return (scl===3 || scl===8 || scl===9 || scl===10 || scl===11);
     }
 
-    function evaluatePixel(s) {
+    function evaluatePixel(s,scene) {
       if (isBad(s.SCL) || s.dataMask===0) {
         return [NaN];
       }
@@ -69,11 +71,11 @@ def sentinelhub_ndvi_with_date(geom, time_range):
             }]
         },
         "processingOptions": {
-            "includeMetadata": True   # ✅ clé magique !
+            "includeMetadata": True
         },
         "output": {
-            "width": 2048,
-            "height": 2048,
+            "width": 1024,
+            "height": 1024,
             "responses": [
                 { "identifier": "default", "format": {"type":"image/tiff"} }
             ]
@@ -84,23 +86,23 @@ def sentinelhub_ndvi_with_date(geom, time_range):
     headers = { "Authorization": f"Bearer {token}" }
 
     r = requests.post(PROCESS_URL, json=body, headers=headers)
+
     if r.status_code != 200:
-        st.error("❌ Erreur Process API CDSE")
+        st.warning("⚠️ Process API erreur")
         st.write(r.text)
         return None, None
 
-    # ✅ NDVI raster
     ndvi_bytes = r.content
 
-    # ✅ métadonnées JSON renvoyées par le Process API
+    # ✅ date via header metadata
     metadata = r.headers.get("x-process-metadata")
+    sensing_date = None
 
     if metadata:
-        import json
         meta = json.loads(metadata)
-        # La date de la tuile :
-        sensing_date = meta["data"][0]["meta"]["sensingTime"]
-    else:
-        sensing_date = None
+        try:
+            sensing_date = meta["data"][0]["meta"]["sensingTime"]
+        except:
+            sensing_date = None
 
     return ndvi_bytes, sensing_date
