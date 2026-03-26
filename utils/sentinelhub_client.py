@@ -1,9 +1,5 @@
 import requests
 import streamlit as st
-import numpy as np
-import rasterio
-import tempfile
-from datetime import datetime
 
 TOKEN_URL = (
   "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
@@ -39,16 +35,11 @@ def sentinelhub_ndvi_with_date(geom, time_range):
 
     minx, miny, maxx, maxy = geom.bounds
 
-    # ✅ NDVI + masque nuages + ombres 
-    # ✅ + extraction date via second output
     evalscript = """
     function setup() {
       return {
         input: ["B04","B08","SCL","dataMask"],
-        output: [
-          { id:"ndvi", bands:1, sampleType:"FLOAT32" },
-          { id:"date", bands:1, sampleType:"UINT32" }
-        ]
+        output: { bands: 1, sampleType:"FLOAT32" }
       }
     }
 
@@ -56,24 +47,11 @@ def sentinelhub_ndvi_with_date(geom, time_range):
       return (scl===3 || scl===8 || scl===9 || scl===10 || scl===11);
     }
 
-    function evaluatePixel(s,scene) {
-
-      // encode the sensing date as YYYYMMDD integer
-      let d = new Date(scene.date);
-      let dateint = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
-
+    function evaluatePixel(s) {
       if (isBad(s.SCL) || s.dataMask===0) {
-        return {
-          ndvi: [NaN],
-          date: [dateint]
-        }
+        return [NaN];
       }
-
-      let ndvi_val = (s.B08 - s.B04) / (s.B08 + s.B04);
-      return {
-        ndvi:[ndvi_val],
-        date:[dateint]
-      }
+      return [(s.B08 - s.B04) / (s.B08 + s.B04)];
     }
     """
 
@@ -90,12 +68,14 @@ def sentinelhub_ndvi_with_date(geom, time_range):
                 }
             }]
         },
+        "processingOptions": {
+            "includeMetadata": True   # ✅ clé magique !
+        },
         "output": {
             "width": 2048,
             "height": 2048,
             "responses": [
-                { "identifier": "ndvi", "format": {"type":"image/tiff"} },
-                { "identifier": "date", "format": {"type":"image/tiff"} }
+                { "identifier": "default", "format": {"type":"image/tiff"} }
             ]
         },
         "evalscript": evalscript
@@ -109,34 +89,18 @@ def sentinelhub_ndvi_with_date(geom, time_range):
         st.write(r.text)
         return None, None
 
-    # ✅ On reçoit un TIF NDVI et un TIF date dans le même payload
-    # Streamlit ne gère que le premier → on télécharge séparément
-
+    # ✅ NDVI raster
     ndvi_bytes = r.content
 
-    # ✅ extraire la date via le deuxième fichier
-    # On relance avec un seul output "date"
-    body_date = body.copy()
-    body_date["output"]["responses"] = [
-        { "identifier": "date", "format": {"type": "image/tiff"} }
-    ]
-    r2 = requests.post(PROCESS_URL, json=body_date, headers=headers)
+    # ✅ métadonnées JSON renvoyées par le Process API
+    metadata = r.headers.get("x-process-metadata")
 
-    if r2.status_code != 200:
-        st.error("❌ Impossible de récupérer la date")
-        return ndvi_bytes, None
+    if metadata:
+        import json
+        meta = json.loads(metadata)
+        # La date de la tuile :
+        sensing_date = meta["data"][0]["meta"]["sensingTime"]
+    else:
+        sensing_date = None
 
-    tmp_date = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
-    tmp_date.write(r2.content)
-    tmp_date.close()
-
-    with rasterio.open(tmp_date.name) as src:
-        arr = src.read(1)
-        vals = arr[arr>0]
-        if len(vals)>0:
-            date_int = int(np.nanmedian(vals))
-            date_str = f"{str(date_int)[0:4]}-{str(date_int)[4:6]}-{str(date_int)[6:8]}"
-        else:
-            date_str = None
-
-    return ndvi_bytes, date_str
+    return ndvi_bytes, sensing_date
