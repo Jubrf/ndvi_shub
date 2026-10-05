@@ -1,1 +1,0 @@
-# NDVI App README placeholder
