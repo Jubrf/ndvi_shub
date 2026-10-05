@@ -1,9 +1,0 @@
-streamlit
-shapely
-requests
-rasterio
-numpy
-folium
-streamlit-folium
-pyproj
-pyshp
